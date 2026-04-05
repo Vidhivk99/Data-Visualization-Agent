@@ -2,8 +2,6 @@
 
 AI Data Visualization Agent is a Streamlit application for exploring CSV datasets with natural-language prompts. It combines dataset profiling, chart generation, Python execution, and result review in one interface.
 
-![AI Data Visualization Agent](img/AI%20DVA3.jpg)
-
 ## Overview
 
 The app is designed for a simple workflow:
@@ -109,7 +107,7 @@ Pandas is used for CSV parsing, summary statistics, and tabular analysis. Matplo
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/GURPREETKAURJETHRA/AI-Data-Visualization-Agent.git
+git clone https://github.com/Vidhivk99/Data-Visualization-Agent.git
 cd AI-Data-Visualization-Agent
 ```
 
