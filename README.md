@@ -108,7 +108,7 @@ Pandas is used for CSV parsing, summary statistics, and tabular analysis. Matplo
 
 ```bash
 git clone https://github.com/Vidhivk99/Data-Visualization-Agent.git
-cd AI-Data-Visualization-Agent
+cd Data-Visualization-Agent
 ```
 
 ### 2. Create a virtual environment and install dependencies
@@ -127,7 +127,13 @@ pip install -r requirements-dev.txt
 
 ### 3. Add API keys
 
-Create `.streamlit/secrets.toml` from the example file and set:
+Create `.streamlit/secrets.toml` from the example file:
+
+```bash
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+```
+
+Then set:
 
 ```toml
 OLLAMA_API_KEY = "your_ollama_key"
