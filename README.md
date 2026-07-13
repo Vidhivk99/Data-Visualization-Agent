@@ -1,170 +1,184 @@
 # AI Data Visualization Agent
 
-AI Data Visualization Agent is a Streamlit application for exploring CSV datasets with natural-language prompts. It combines dataset profiling, chart generation, Python execution, and result review in one interface.
+AI Data Visualization Agent is a Streamlit application for profiling CSV datasets and exploring
+them with natural-language prompts. It combines local dataset inspection, Ollama Cloud code
+generation, E2B sandbox execution, and result review in one interface.
 
-## Overview
+## Provenance
 
-The app is designed for a simple workflow:
+This repository began from Gurpreet Kaur's
+[AI Data Visualization Agent](https://github.com/GURPREETKAURJETHRA/AI-Data-Visualization-Agent).
+Vidhi Khandelwal substantially redesigned and extended that foundation into the current multi-page
+workspace, including dataset profiling, constrained prompt-to-Python analysis, result
+normalization, session isolation, deterministic demo mode, tests, and release checks. The full
+contributor history is preserved in Git. Ollama Cloud, E2B, Streamlit, and the other named projects
+are independent third-party services or libraries; this project does not claim their endorsement.
 
-1. Start on the `Information` page to review the product overview.
-2. Move to `AI Workspace` to upload a CSV file and run analysis prompts.
-3. Review the uploaded dataset in `Dataset Lab`.
-4. Inspect the charts, tables, Python, and logs returned by the app.
+## Application flow
 
-## Main sections
+1. Open `Information` for the product overview.
+2. In demo mode, explore the bundled synthetic CSV and deterministic local results.
+3. In live mode, use `AI Workspace` to upload a CSV and run an analysis prompt.
+4. Inspect the active file in `Dataset Lab`.
+5. Review generated Python, charts, tables, explanations, and runtime logs.
 
-### Information
+```mermaid
+flowchart LR
+    U["Browser"] --> S["Streamlit server"]
+    S --> D["Demo mode: bundled CSV + local deterministic analysis"]
+    S --> L["Live mode: uploaded CSV + session state"]
+    L --> O["Ollama Cloud: prompt and dataset excerpt"]
+    O --> S
+    L --> E["E2B: full CSV and generated Python"]
+    E --> S
+    S --> U
+```
 
-- Review the app overview and usage flow
-- See the available Ollama Cloud models
-- Use it as the default landing page
+## Privacy and data flow
 
-### AI Workspace
+Public demo mode uses only bundled synthetic data. Live mode processes user uploads and should be
+limited to an approved audience and approved data.
 
-- Upload or replace the active CSV file
-- Ask questions about the uploaded dataset
-- Review the Python used for analysis
-- View interactive charts, tables, and runtime logs
-- Reuse starter prompts from the side panel
-- Restore prior analysis output after a page refresh
+| Data | Destination | Current behavior |
+| --- | --- | --- |
+| Bundled demo CSV | Streamlit server | Loaded from source code and analyzed locally. Demo mode does not accept user uploads. |
+| Uploaded live CSV | Streamlit server | Parsed in process and held in Streamlit session state. The app does not intentionally write the CSV to disk. |
+| Dataset context | Ollama Cloud | In live mode, column names, types, summary counts, and the first five rows are included in the model prompt. Recent chat messages are also sent. |
+| Full CSV | E2B | In live mode, uploaded to an E2B sandbox only when generated code is executed. |
+| API keys | Streamlit server | Read from Streamlit secrets, environment variables, or password inputs. Sidebar values stay in session state; the app does not intentionally write keys to disk. |
+| Prompts and results | Streamlit server | Held in session state for the active Streamlit session. The app does not provide durable history. |
 
-### Dataset Lab
+Session memory can remain in the server process until eviction or restart, and the hosting
+platform may add its own logs, backups, or telemetry. The app has no user authentication,
+configurable retention policy, deletion audit, or data-classification controls. `Reset conversation`
+clears sidebar keys and conversation history from the current session. Do not use live mode with
+confidential, regulated, personal, or proprietary data unless the deployment and both external
+providers have been approved for that data.
 
-- Inspect dataset shape and completeness
-- Review missing-value hotspots
-- Preview rows and numeric summaries
-- Explore column groups and metadata
+## Demo vs live mode
 
-### Project Details
+Set `DEMO_MODE=true` in the environment or Streamlit secrets to enable public demo mode.
 
-- See the product summary
-- Review the system flow
-- Read the implementation and optimization notes
+- **Demo mode:** The upload control and provider key inputs are disabled. The app loads a bundled
+  synthetic retail CSV and answers supported trend, comparison, satisfaction, and data-quality
+  prompts with deterministic local Pandas routines. It does not call Ollama Cloud or E2B.
+- **Live mode:** Leave `DEMO_MODE` unset or false. Users can upload CSV files and sending a prompt
+  requires both API keys. Dataset excerpts and conversation context go to Ollama Cloud; the full CSV
+  and generated Python go to E2B. Provider quotas, billing, availability, terms, and retention
+  policies apply.
 
-## Ollama Cloud models in the app
+CI exercises the local demo boundary and does not call either external service.
 
-The model selector uses these Ollama Cloud model names:
+## Models configured in the app
 
 - `qwen3-coder:480b-cloud`
 - `gpt-oss:120b-cloud`
 - `gpt-oss:20b-cloud`
 - `deepseek-v3.1:671b-cloud`
 
-## How it works
+Model availability can change independently of this repository.
 
-```mermaid
-flowchart LR
-    U["User uploads CSV + asks a question"] --> S["Streamlit app"]
-    S --> P["Dataset profiling"]
-    P --> T["Ollama Cloud model"]
-    T --> E["E2B sandbox"]
-    E --> R["Charts, tables, logs, and explanations"]
-    R --> S
-```
+## Limitations
 
-## Architecture
+- CSV is the only supported upload format.
+- Demo mode uses one synthetic dataset and a small set of deterministic analyses; it is not a general
+  AI assistant and does not execute generated Python.
+- Generated analysis is nondeterministic and may be incomplete, inaccurate, or produce failing
+  Python in live mode. Review the code and results before using them for decisions.
+- The model is instructed to use Pandas, NumPy, Matplotlib, and the Python standard library, but the
+  application does not statically prove that generated code follows every instruction.
+- E2B isolates generated code from the Streamlit host, but sandbox execution still processes the
+  uploaded data with a third party.
+- Live mode has no built-in application authentication, request-rate, user, or cost controls.
+- Session state is not durable; reconnects, restarts, and platform behavior can discard work.
+- Live analysis depends on external network access and valid provider accounts with available quota.
 
-### Interface
+## Requirements
 
-Streamlit handles file upload, model selection, chat interaction, dataset inspection, and result display.
+- Python 3.11 or 3.12
+- An Ollama Cloud API key and E2B API key for live analysis
 
-### Reasoning
-
-Ollama Cloud is used to interpret the prompt and return a short explanation plus one executable Python block.
-
-### Execution
-
-E2B runs the analysis code in an isolated environment so the host app does not execute it directly.
-
-### Data processing
-
-Pandas is used for CSV parsing, summary statistics, and tabular analysis. Matplotlib is used for charts, and Pillow is used to render image results returned from the sandbox.
-
-## Current implementation notes
-
-- CSV loading, dataset profiles, and column metadata are cached
-- Conversation state resets only when the uploaded file changes
-- API keys are saved locally for the app and cleared when `Reset conversation` is used
-- The active dataset and prior analysis output are restored after refresh
-- The app exposes the Python used for analysis
-- Supported chart results are rendered as interactive visuals in the app
-- Sandbox logs are available when execution returns stdout or stderr
-
-## Tech stack
-
-- Python
-- Streamlit
-- Ollama Cloud
-- E2B Code Interpreter
-- Altair
-- Pandas
-- NumPy
-- Matplotlib
-- Pillow
+The repository defaults to Python 3.11 through `.python-version`. Direct dependencies are pinned in
+`requirements.txt`; `requirements-lock.txt` constrains the full package snapshot captured from the
+working Python 3.11.14 environment. CI installs that snapshot on both supported Python versions.
 
 ## Quickstart
-
-### 1. Clone the repository
 
 ```bash
 git clone https://github.com/Vidhivk99/Data-Visualization-Agent.git
 cd Data-Visualization-Agent
-```
-
-### 2. Create a virtual environment and install dependencies
-
-```bash
-python3 -m venv .venv
+python3.11 -m venv .venv
 . .venv/bin/activate
-pip install -r requirements.txt
+python -m pip install --disable-pip-version-check -r requirements.txt
 ```
 
-Optional development tools:
+For development and verification tools, install `requirements-dev.txt` instead; it includes the
+runtime requirements:
 
 ```bash
-pip install -r requirements-dev.txt
+python -m pip install --disable-pip-version-check -r requirements-dev.txt
 ```
 
-### 3. Add API keys
+Run the safe local demo without provider credentials:
 
-Create `.streamlit/secrets.toml` from the example file:
+```bash
+DEMO_MODE=true streamlit run ai_data_visualisation_agent.py
+```
+
+For live analysis, create a local secrets file and add dedicated credentials:
 
 ```bash
 cp .streamlit/secrets.toml.example .streamlit/secrets.toml
 ```
-
-Then set:
 
 ```toml
 OLLAMA_API_KEY = "your_ollama_key"
 E2B_API_KEY = "your_e2b_key"
 ```
 
-You can also provide these through environment variables.
-
-### 4. Run the app
+Environment variables with the same names are also accepted. Run the app with:
 
 ```bash
 streamlit run ai_data_visualisation_agent.py
 ```
 
-Or use the Makefile:
+## Verification
 
 ```bash
-make install-dev
-make run
+python -m pip check
+python -m ruff check .
+python -m pytest
+python -c "import ai_data_visualisation_agent as app; assert callable(app.main)"
 ```
+
+GitHub Actions runs those checks on Python 3.11 and 3.12. The tests cover importability, deterministic
+filename and prompt helpers, and the bundled local demo result path. They do not validate provider
+connectivity, model quality, sandbox behavior, browser interactions, or deployment readiness.
+
+## Deployment
+
+No hosted deployment or deployment manifest is included. A public demo deployment should:
+
+1. Use Python 3.11 or 3.12 and install `requirements.txt`.
+2. Set `DEMO_MODE=true` and do not configure Ollama Cloud or E2B credentials.
+3. Start Streamlit with `--server.headless true --browser.gatherUsageStats false`.
+4. Disable unnecessary network egress as defense in depth.
+5. Use an ephemeral runtime, monitor availability, and run `docs/RELEASE_CHECKLIST.md` before release.
+
+For a controlled live deployment, leave demo mode disabled, inject dedicated least-privilege
+credentials through the platform's secret mechanism, restrict the audience, use only approved data,
+set provider spending limits, and monitor usage. Do not expose live mode to untrusted traffic until
+authentication, reviewed session isolation, retention controls, file and request limits, and
+abuse/cost controls are in place.
 
 ## Repository layout
 
-- `ai_data_visualisation_agent.py` - main Streamlit application
-- `.streamlit/config.toml` - Streamlit theme settings
-- `.streamlit/secrets.toml.example` - example local secrets file
-- `requirements.txt` - runtime dependencies
-- `requirements-dev.txt` - development dependencies
-
-## Notes
-
-- The app currently supports CSV uploads
-- Analysis code is limited to Pandas, NumPy, Matplotlib, and Python standard library usage
-- The uploaded dataset is sent to E2B only when sandbox execution is requested
+- `ai_data_visualisation_agent.py` - Streamlit application
+- `.github/workflows/ci.yml` - Python 3.11/3.12 verification matrix
+- `.streamlit/config.toml` - Streamlit settings
+- `.streamlit/secrets.toml.example` - local secret names and placeholders
+- `requirements.txt` - pinned direct runtime dependencies
+- `requirements-dev.txt` - pinned test and lint tools
+- `requirements-lock.txt` - exact working-environment constraints snapshot
+- `tests/` - deterministic smoke tests
+- `docs/RELEASE_CHECKLIST.md` - release and public-exposure gates

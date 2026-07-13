@@ -7,8 +7,9 @@ import re
 import sys
 import time
 import warnings
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable, Optional
+from typing import Any
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -19,18 +20,45 @@ import streamlit.components.v1 as components
 from e2b_code_interpreter import Sandbox
 from PIL import Image
 
-
 APP_TITLE = "AI Data Visualization Agent"
 APP_SUBTITLE = (
     "Upload a CSV, explore the data, and run analysis from one place."
 )
-APP_STATE_DIR = os.path.join(".streamlit", "app_state")
-WORKSPACE_STATE_PATH = os.path.join(APP_STATE_DIR, "workspace_state.json")
-DATASET_STATE_PATH = os.path.join(APP_STATE_DIR, "active_dataset.csv")
 INTRO_MESSAGE = (
     "Upload a CSV and tell me what you want to explore. I can help with trends, comparisons, outliers, "
     "and quick data-quality checks."
 )
+DEMO_INTRO_MESSAGE = (
+    "Explore the bundled synthetic retail dataset. Ask for a monthly trend, a regional comparison, "
+    "or a data-quality audit."
+)
+DEMO_DATASET_NAME = "synthetic_retail_performance.csv"
+DEMO_DATASET_BYTES = b"""month,region,channel,units,revenue,customer_satisfaction
+2026-01,North,Online,128,18432,4.5
+2026-01,South,Partner,112,15120,4.2
+2026-01,East,Retail,96,12960,4.1
+2026-01,West,Online,104,14976,4.3
+2026-02,North,Partner,134,19430,4.4
+2026-02,South,Online,118,16284,4.3
+2026-02,East,Retail,101,13938,4.2
+2026-02,West,Partner,109,15805,4.3
+2026-03,North,Online,141,21150,4.6
+2026-03,South,Retail,124,17360,4.4
+2026-03,East,Partner,108,15120,4.2
+2026-03,West,Online,116,17168,4.4
+2026-04,North,Retail,149,22648,4.7
+2026-04,South,Online,131,18502,4.5
+2026-04,East,Partner,114,16245,4.3
+2026-04,West,Retail,123,18450,4.5
+2026-05,North,Online,156,24024,4.7
+2026-05,South,Partner,139,19877,4.5
+2026-05,East,Retail,121,17424,4.4
+2026-05,West,Online,130,19890,4.6
+2026-06,North,Partner,164,25420,4.8
+2026-06,South,Online,147,21315,4.6
+2026-06,East,Retail,129,18834,4.5
+2026-06,West,Partner,138,21390,4.6
+"""
 
 
 @dataclass(frozen=True)
@@ -74,6 +102,13 @@ MODEL_CATALOG: tuple[ModelOption, ...] = (
 )
 
 MODEL_BY_ID = {model.id: model for model in MODEL_CATALOG}
+DEMO_MODEL = ModelOption(
+    label="Deterministic demo",
+    id="deterministic-demo",
+    api_candidates=(),
+    summary="Local analysis of bundled synthetic retail data with no external service calls.",
+    best_for="Trying the workspace safely on a public deployment.",
+)
 
 CODE_BLOCK_RE = re.compile(r"```(?P<lang>[a-zA-Z0-9_+-]*)\n(?P<code>.*?)\n```", re.DOTALL)
 CHART_REQUEST_RE = re.compile(
@@ -128,67 +163,13 @@ def _get_secret(name: str) -> str:
     return os.getenv(name, "")
 
 
+def _is_demo_mode() -> bool:
+    return _get_secret("DEMO_MODE").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _default_chat_history() -> list[dict[str, str]]:
-    return [{"role": "assistant", "content": INTRO_MESSAGE}]
-
-
-def _ensure_app_state_dir() -> None:
-    os.makedirs(APP_STATE_DIR, exist_ok=True)
-
-
-def _persist_workspace_state() -> None:
-    _ensure_app_state_dir()
-    payload = {
-        "ollama_api_key": str(st.session_state.get("ollama_api_key") or ""),
-        "e2b_api_key": str(st.session_state.get("e2b_api_key") or ""),
-        "model_id": str(st.session_state.get("model_id") or MODEL_CATALOG[0].id),
-        "dataset_name": st.session_state.get("dataset_name"),
-        "dataset_token": st.session_state.get("dataset_token"),
-        "chat": st.session_state.get("chat") or _default_chat_history(),
-        "analysis_runs": st.session_state.get("analysis_runs") or [],
-        "pending_prompt": str(st.session_state.get("pending_prompt") or ""),
-    }
-    with open(WORKSPACE_STATE_PATH, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, ensure_ascii=True, indent=2)
-
-    dataset_bytes = st.session_state.get("dataset_bytes")
-    if st.session_state.get("dataset_name") and isinstance(dataset_bytes, (bytes, bytearray)):
-        with open(DATASET_STATE_PATH, "wb") as handle:
-            handle.write(bytes(dataset_bytes))
-    elif os.path.exists(DATASET_STATE_PATH):
-        os.remove(DATASET_STATE_PATH)
-
-
-def _load_persisted_workspace_state() -> None:
-    if not os.path.exists(WORKSPACE_STATE_PATH):
-        return
-
-    try:
-        with open(WORKSPACE_STATE_PATH, "r", encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except Exception:
-        return
-
-    model_id = str(payload.get("model_id") or "")
-    if model_id in MODEL_BY_ID:
-        st.session_state.model_id = model_id
-
-    st.session_state.ollama_api_key = str(payload.get("ollama_api_key") or st.session_state.get("ollama_api_key") or "")
-    st.session_state.e2b_api_key = str(payload.get("e2b_api_key") or st.session_state.get("e2b_api_key") or "")
-    st.session_state.dataset_name = payload.get("dataset_name")
-    st.session_state.dataset_token = payload.get("dataset_token")
-    st.session_state.chat = payload.get("chat") or _default_chat_history()
-    st.session_state.analysis_runs = payload.get("analysis_runs") or []
-    st.session_state.pending_prompt = str(payload.get("pending_prompt") or "")
-
-    if os.path.exists(DATASET_STATE_PATH) and st.session_state.dataset_name:
-        try:
-            with open(DATASET_STATE_PATH, "rb") as handle:
-                st.session_state.dataset_bytes = handle.read()
-        except Exception:
-            st.session_state.dataset_bytes = None
-    else:
-        st.session_state.dataset_bytes = None
+    message = DEMO_INTRO_MESSAGE if _is_demo_mode() else INTRO_MESSAGE
+    return [{"role": "assistant", "content": message}]
 
 
 def _sanitize_filename(name: str) -> str:
@@ -267,14 +248,11 @@ def _ensure_chart_display(code: str, user_text: str) -> str:
     )
 
 
-@st.cache_data(show_spinner=False)
 def _load_csv(file_bytes: bytes) -> pd.DataFrame:
     return pd.read_csv(io.BytesIO(file_bytes), low_memory=False)
 
 
-@st.cache_data(show_spinner=False)
-def _profile_dataset(file_bytes: bytes) -> DatasetProfile:
-    df = _load_csv(file_bytes)
+def _profile_dataset(df: pd.DataFrame) -> DatasetProfile:
     missing_cells = int(df.isna().sum().sum())
     missing_by_col = df.isna().sum().sort_values(ascending=False)
     top_missing_columns = tuple(
@@ -304,9 +282,7 @@ def _profile_dataset(file_bytes: bytes) -> DatasetProfile:
     )
 
 
-@st.cache_data(show_spinner=False)
-def _column_metadata(file_bytes: bytes) -> pd.DataFrame:
-    df = _load_csv(file_bytes)
+def _column_metadata(df: pd.DataFrame) -> pd.DataFrame:
     meta = pd.DataFrame(
         {
             "column": [str(column) for column in df.columns],
@@ -358,7 +334,7 @@ Dataset context:
 
 
 class OllamaAPIError(Exception):
-    def __init__(self, message: str, http_status: Optional[int] = None) -> None:
+    def __init__(self, message: str, http_status: int | None = None) -> None:
         super().__init__(message)
         self.http_status = http_status
 
@@ -390,7 +366,7 @@ def _ollama_chat(
     model: ModelOption,
     messages: list[dict[str, str]],
 ) -> str:
-    last_model_error: Optional[OllamaAPIError] = None
+    last_model_error: OllamaAPIError | None = None
 
     for candidate in model.api_candidates:
         request_payload = json.dumps(
@@ -441,7 +417,7 @@ def _ollama_chat(
 def _run_code(
     sandbox: Sandbox,
     code: str,
-) -> tuple[Optional[list[Any]], Optional[str], Optional[str], Optional[str]]:
+) -> tuple[list[Any] | None, str | None, str | None, str | None]:
     with st.spinner("Executing Python in the secure E2B sandbox..."):
         execution = sandbox.run_code(code)
 
@@ -453,14 +429,14 @@ def _run_code(
 
 
 def _json_safe_value(value: Any) -> Any:
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if value is None or isinstance(value, str | int | float | bool):
         return value
     if isinstance(value, dict):
         return {str(key): _json_safe_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         return [_json_safe_value(item) for item in value]
     enum_value = getattr(value, "value", None)
-    if isinstance(enum_value, (str, int, float, bool)):
+    if isinstance(enum_value, str | int | float | bool):
         return enum_value
     if hasattr(value, "__dict__"):
         return {
@@ -471,7 +447,7 @@ def _json_safe_value(value: Any) -> Any:
     return str(value)
 
 
-def _figure_to_png_b64(figure: Any) -> Optional[str]:
+def _figure_to_png_b64(figure: Any) -> str | None:
     try:
         buffer = io.BytesIO()
         figure.savefig(buffer, format="png", bbox_inches="tight")
@@ -506,11 +482,11 @@ def _render_chart_payload(chart_payload: dict[str, Any]) -> bool:
             label = str((series or {}).get("label") or "Series")
             points = (series or {}).get("points") or []
             x_values = _coerce_chart_axis(
-                [point[0] for point in points if isinstance(point, (list, tuple)) and len(point) == 2],
+                [point[0] for point in points if isinstance(point, list | tuple) and len(point) == 2],
                 str(chart_payload.get("x_scale") or ""),
             )
-            y_values = [point[1] for point in points if isinstance(point, (list, tuple)) and len(point) == 2]
-            for x_value, y_value in zip(x_values, y_values):
+            y_values = [point[1] for point in points if isinstance(point, list | tuple) and len(point) == 2]
+            for x_value, y_value in zip(x_values, y_values, strict=False):
                 rows.append({"series": label, "x": x_value, "y": y_value})
 
         if not rows:
@@ -692,9 +668,12 @@ def _serialize_results(results: Iterable[Any]) -> list[dict[str, Any]]:
 def _render_serialized_results(results: Iterable[dict[str, Any]]) -> None:
     for result in results:
         kind = str(result.get("kind") or "")
-        if kind == "chart" and isinstance(result.get("chart"), dict):
-            if _render_chart_payload(result["chart"]):
-                continue
+        if (
+            kind == "chart"
+            and isinstance(result.get("chart"), dict)
+            and _render_chart_payload(result["chart"])
+        ):
+            continue
 
         if kind == "html" and result.get("html"):
             components.html(str(result["html"]), height=620, scrolling=True)
@@ -795,6 +774,116 @@ def _suggested_prompts(profile: DatasetProfile) -> list[str]:
 
 def _format_percentage(value: float) -> str:
     return f"{value * 100:.1f}%"
+
+
+def _serialized_table(frame: pd.DataFrame) -> dict[str, Any]:
+    return {"kind": "table", "data": frame.to_json(orient="split", date_format="iso")}
+
+
+def _build_demo_run_record(user_text: str, df: pd.DataFrame) -> dict[str, Any]:
+    normalized_text = user_text.casefold()
+    results: list[dict[str, Any]] = []
+
+    if any(term in normalized_text for term in ("quality", "missing", "duplicate", "audit", "clean")):
+        quality_frame = pd.DataFrame(
+            {
+                "column": [str(column) for column in df.columns],
+                "missing_values": df.isna().sum().tolist(),
+                "unique_values": df.nunique(dropna=True).tolist(),
+            }
+        )
+        missing_cells = int(quality_frame["missing_values"].sum())
+        duplicate_rows = int(df.duplicated().sum())
+        assistant_text = (
+            f"The bundled dataset has {missing_cells} missing cells and {duplicate_rows} duplicate rows. "
+            "Its columns are complete and ready for the demo trend and comparison views."
+        )
+        results.append(_serialized_table(quality_frame))
+    elif any(term in normalized_text for term in ("trend", "month", "time", "over time", "line")):
+        monthly = df.groupby("month", as_index=False, sort=True)["revenue"].sum()
+        first_revenue = float(monthly.iloc[0]["revenue"])
+        last_revenue = float(monthly.iloc[-1]["revenue"])
+        growth = ((last_revenue / first_revenue) - 1) * 100
+        assistant_text = (
+            f"Monthly revenue rises from ${first_revenue:,.0f} to ${last_revenue:,.0f}, "
+            f"a {growth:.1f}% increase across the bundled sample."
+        )
+        results.extend(
+            [
+                {
+                    "kind": "chart",
+                    "chart": {
+                        "type": "line",
+                        "title": "Monthly revenue",
+                        "x_label": "Month",
+                        "y_label": "Revenue ($)",
+                        "x_scale": "datetime",
+                        "elements": [
+                            {
+                                "label": "Revenue",
+                                "points": monthly[["month", "revenue"]].values.tolist(),
+                            }
+                        ],
+                    },
+                },
+                _serialized_table(monthly),
+            ]
+        )
+    else:
+        group_column = "channel" if "channel" in normalized_text else "region"
+        metric = "customer_satisfaction" if "satisfaction" in normalized_text else "revenue"
+        aggregation = "mean" if metric == "customer_satisfaction" else "sum"
+        comparison = (
+            df.groupby(group_column, as_index=False)[metric]
+            .agg(aggregation)
+            .sort_values(metric, ascending=False)
+            .reset_index(drop=True)
+        )
+        leader = str(comparison.iloc[0][group_column])
+        leader_value = float(comparison.iloc[0][metric])
+        if metric == "revenue":
+            value_text = f"${leader_value:,.0f} in revenue"
+            y_label = "Revenue ($)"
+        else:
+            value_text = f"an average satisfaction score of {leader_value:.2f}"
+            y_label = "Average satisfaction"
+        assistant_text = (
+            f"{leader} leads the {group_column} comparison with {value_text}. "
+            "This result is calculated locally from the bundled synthetic dataset."
+        )
+        results.extend(
+            [
+                {
+                    "kind": "chart",
+                    "chart": {
+                        "type": "bar",
+                        "title": f"{y_label} by {group_column}",
+                        "x_label": group_column.replace("_", " ").title(),
+                        "y_label": y_label,
+                        "elements": [
+                            {
+                                "label": row[group_column],
+                                "group": metric,
+                                "value": row[metric],
+                            }
+                            for row in comparison.to_dict(orient="records")
+                        ],
+                    },
+                },
+                _serialized_table(comparison),
+            ]
+        )
+
+    return {
+        "user_text": user_text,
+        "assistant_text": assistant_text,
+        "python_code": "",
+        "results": results,
+        "stdout": "",
+        "stderr": "",
+        "sandbox_error": "",
+        "runtime_seconds": None,
+    }
 
 
 def _render_section_header(title: str, subtitle: str, kicker: str) -> None:
@@ -974,8 +1063,8 @@ def _inject_styles() -> None:
 
 
 def _init_state() -> None:
-    st.session_state.setdefault("ollama_api_key", _get_secret("OLLAMA_API_KEY"))
-    st.session_state.setdefault("e2b_api_key", _get_secret("E2B_API_KEY"))
+    st.session_state.setdefault("ollama_api_key", "")
+    st.session_state.setdefault("e2b_api_key", "")
     st.session_state.setdefault("model_id", MODEL_CATALOG[0].id)
     st.session_state.setdefault("chat", _default_chat_history())
     st.session_state.setdefault("analysis_runs", [])
@@ -983,10 +1072,6 @@ def _init_state() -> None:
     st.session_state.setdefault("dataset_token", None)
     st.session_state.setdefault("dataset_bytes", None)
     st.session_state.setdefault("pending_prompt", "")
-    st.session_state.setdefault("_workspace_state_loaded", False)
-    if not st.session_state._workspace_state_loaded:
-        _load_persisted_workspace_state()
-        st.session_state._workspace_state_loaded = True
     if not st.session_state.chat:
         st.session_state.chat = _default_chat_history()
 
@@ -997,7 +1082,6 @@ def _reset_conversation() -> None:
     st.session_state.chat = _default_chat_history()
     st.session_state.analysis_runs = []
     st.session_state.pending_prompt = ""
-    _persist_workspace_state()
 
 
 def _clear_active_dataset() -> None:
@@ -1017,50 +1101,63 @@ def _set_active_dataset(filename: str, file_bytes: bytes) -> None:
         st.session_state.chat = _default_chat_history()
         st.session_state.analysis_runs = []
         st.session_state.pending_prompt = ""
-    _persist_workspace_state()
 
 
 def _current_model() -> ModelOption:
+    if _is_demo_mode():
+        return DEMO_MODEL
     selected_id = str(st.session_state.get("model_id") or MODEL_CATALOG[0].id)
     return MODEL_BY_ID.get(selected_id, MODEL_CATALOG[0])
 
 
 def _current_secrets() -> Secrets:
+    if _is_demo_mode():
+        return Secrets(ollama_api_key="", e2b_api_key="")
     return Secrets(
-        ollama_api_key=str(st.session_state.get("ollama_api_key") or ""),
-        e2b_api_key=str(st.session_state.get("e2b_api_key") or ""),
+        ollama_api_key=str(st.session_state.get("ollama_api_key") or _get_secret("OLLAMA_API_KEY")),
+        e2b_api_key=str(st.session_state.get("e2b_api_key") or _get_secret("E2B_API_KEY")),
     )
 
 
 def _sidebar() -> tuple[Secrets, ModelOption]:
     with st.sidebar:
         st.markdown("## Control Room")
-        st.caption("Wire in your keys, choose the model profile, and steer the analysis run.")
+        if _is_demo_mode():
+            st.caption("Public demo with bundled data and deterministic local analysis.")
+            st.info("No API keys are needed, and no data is sent to Ollama or E2B.")
+            selected_model = DEMO_MODEL
+        else:
+            st.caption("Wire in your keys, choose the model profile, and steer the analysis run.")
+            st.text_input(
+                "Ollama Cloud API key",
+                type="password",
+                key="ollama_api_key",
+                help="Kept only for this Streamlit session.",
+            )
+            if _get_secret("OLLAMA_API_KEY"):
+                st.caption("A server-side Ollama key is configured; a session key overrides it.")
+            else:
+                st.caption("Get a key: https://ollama.com/settings/keys")
 
-        st.session_state.ollama_api_key = st.text_input(
-            "Ollama Cloud API key",
-            value=st.session_state.ollama_api_key,
-            type="password",
-            help="Saved locally for this app until you use Reset conversation.",
-        )
-        st.caption("Get a key: https://ollama.com/settings/keys")
+            st.text_input(
+                "E2B API key",
+                type="password",
+                key="e2b_api_key",
+                help="Kept only for this Streamlit session.",
+            )
+            if _get_secret("E2B_API_KEY"):
+                st.caption("A server-side E2B key is configured; a session key overrides it.")
+            else:
+                st.caption("Get a key: https://e2b.dev/")
 
-        st.session_state.e2b_api_key = st.text_input(
-            "E2B API key",
-            value=st.session_state.e2b_api_key,
-            type="password",
-            help="Saved locally for this app until you use Reset conversation.",
-        )
-        st.caption("Get a key: https://e2b.dev/")
-
-        selected_id = st.selectbox(
-            "Inference model",
-            options=[model.id for model in MODEL_CATALOG],
-            format_func=lambda model_id: MODEL_BY_ID[model_id].label,
-            index=[model.id for model in MODEL_CATALOG].index(st.session_state.model_id),
-        )
-        st.session_state.model_id = selected_id
-        selected_model = MODEL_BY_ID[selected_id]
+            selected_id = st.selectbox(
+                "Inference model",
+                options=[model.id for model in MODEL_CATALOG],
+                format_func=lambda model_id: MODEL_BY_ID[model_id].label,
+                index=[model.id for model in MODEL_CATALOG].index(st.session_state.model_id),
+            )
+            st.session_state.model_id = selected_id
+            selected_model = MODEL_BY_ID[selected_id]
 
         st.markdown("### Model profile")
         st.markdown(f"**{selected_model.label}**")
@@ -1077,16 +1174,13 @@ def _sidebar() -> tuple[Secrets, ModelOption]:
         st.write("- Mention exact columns when you can.")
         st.write("- Start with a cleanup audit for messy files.")
 
-        if st.button("Reset conversation", use_container_width=True):
-            _reset_conversation()
-            st.rerun()
+        st.button(
+            "Reset conversation",
+            use_container_width=True,
+            on_click=_reset_conversation,
+        )
 
-    _persist_workspace_state()
-    secrets = Secrets(
-        ollama_api_key=str(st.session_state.ollama_api_key or ""),
-        e2b_api_key=str(st.session_state.e2b_api_key or ""),
-    )
-    return secrets, selected_model
+    return _current_secrets(), selected_model
 
 
 def _upload_dataset(sandbox: Sandbox, filename: str, file_bytes: bytes) -> str:
@@ -1171,7 +1265,6 @@ def _render_prompt_gallery(profile: DatasetProfile) -> None:
     )
     if st.button("Use selected prompt", use_container_width=True, key="workspace_starter_prompt_button"):
         st.session_state.pending_prompt = selected_prompt
-        _persist_workspace_state()
 
 
 def _render_workspace_overview(profile: DatasetProfile, model: ModelOption) -> None:
@@ -1220,7 +1313,7 @@ def _render_dataset_quick_view(uploaded_name: str, profile: DatasetProfile) -> N
         st.write("**Categorical columns:** " + ", ".join(profile.categorical_columns[:6]))
 
 
-def _render_dataset_lab(file_bytes: bytes, df: pd.DataFrame, profile: DatasetProfile) -> None:
+def _render_dataset_lab(df: pd.DataFrame, profile: DatasetProfile) -> None:
     _render_section_header(
         "Dataset overview",
         "A clear look at the file you uploaded, from quality checks to column details.",
@@ -1267,7 +1360,7 @@ def _render_dataset_lab(file_bytes: bytes, df: pd.DataFrame, profile: DatasetPro
             st.code(", ".join(profile.datetime_like_columns[:10]), language="text")
     with schema_right:
         st.markdown("#### Column metadata")
-        st.dataframe(_column_metadata(file_bytes), use_container_width=True, height=360)
+        st.dataframe(_column_metadata(df), use_container_width=True, height=360)
 
     numeric_preview = df.select_dtypes(include="number")
     if not numeric_preview.empty:
@@ -1285,29 +1378,47 @@ def _render_project_details() -> None:
     st.write(
         "The app keeps file upload, analysis, chart generation, and result review in one place so the workflow stays easy to follow."
     )
-    st.write("- Upload a CSV and inspect it")
+    st.write("- Inspect a CSV dataset")
     st.write("- Ask questions in plain language")
     st.write("- Review charts, code, and runtime logs")
 
     st.markdown("#### Behind the scenes")
-    st.write("1. **Upload**: the CSV is loaded and checked inside the app.")
-    st.write("2. **Analysis**: the selected Ollama Cloud model writes the Python needed for the request.")
-    st.write("3. **Execution**: E2B runs that code in an isolated environment.")
-    st.write("4. **Results**: the app shows the charts, tables, explanation, and logs in the workspace.")
+    if _is_demo_mode():
+        st.write("1. **Dataset**: the app loads a bundled synthetic retail CSV.")
+        st.write("2. **Analysis**: deterministic local routines answer supported demo questions.")
+        st.write("3. **Results**: the workspace renders charts and tables without external calls.")
+    else:
+        st.write("1. **Upload**: the CSV is loaded and checked inside the app.")
+        st.write("2. **Analysis**: the selected Ollama Cloud model writes Python for the request.")
+        st.write("3. **Execution**: E2B runs that code in an isolated environment.")
+        st.write("4. **Results**: the workspace shows charts, tables, explanations, and logs.")
 
 
 def _render_information_page() -> None:
     st.caption("INFORMATION")
     st.title(APP_TITLE)
-    st.write(APP_SUBTITLE)
     st.write(
-        "This app helps you upload a CSV, ask questions about it, and review the charts and code that come back."
+        "Explore bundled synthetic data with deterministic local analysis."
+        if _is_demo_mode()
+        else APP_SUBTITLE
     )
+    if _is_demo_mode():
+        st.write(
+            "This public demo uses bundled synthetic data and local deterministic analysis. "
+            "It does not send data to Ollama or E2B."
+        )
+    else:
+        st.write(
+            "This app helps you upload a CSV, ask questions about it, and review the charts and code that come back."
+        )
 
     overview_col, workflow_col = st.columns([1.1, 0.9], gap="large")
     with overview_col:
         st.markdown("#### What you can do")
-        st.write("- Upload a CSV in the AI Workspace page")
+        if _is_demo_mode():
+            st.write("- Explore the bundled CSV in the AI Workspace page")
+        else:
+            st.write("- Upload a CSV in the AI Workspace page")
         st.write("- Check the file structure and data quality")
         st.write("- Ask for trends, comparisons, charts, or quick audits")
         st.write("- Review the generated Python, outputs, and logs")
@@ -1323,19 +1434,27 @@ def _render_information_page() -> None:
     with detail_col:
         st.markdown("#### What it includes")
         st.write("- CSV profiling and column checks")
-        st.write("- Prompt-to-Python analysis")
-        st.write("- E2B sandbox execution")
-        st.write("- Restored workspace state after refresh")
+        if _is_demo_mode():
+            st.write("- Deterministic trend, comparison, and quality views")
+            st.write("- Bundled synthetic retail data")
+        else:
+            st.write("- Prompt-to-Python analysis")
+            st.write("- E2B sandbox execution")
+        st.write("- Session-only workspace state")
 
     with model_col:
-        st.markdown("#### Available models")
-        for model in MODEL_CATALOG:
-            st.write(f"- **{model.label}**: {model.best_for}")
+        if _is_demo_mode():
+            st.markdown("#### Demo engine")
+            st.write(f"- **{DEMO_MODEL.label}**: {DEMO_MODEL.best_for}")
+        else:
+            st.markdown("#### Available models")
+            for model in MODEL_CATALOG:
+                st.write(f"- **{model.label}**: {model.best_for}")
 
 
 def _render_analysis_history() -> None:
     with st.chat_message("assistant"):
-        st.markdown(INTRO_MESSAGE)
+        st.markdown(DEMO_INTRO_MESSAGE if _is_demo_mode() else INTRO_MESSAGE)
 
     for run in st.session_state.analysis_runs:
         with st.chat_message("user"):
@@ -1371,7 +1490,7 @@ def _render_analysis_history() -> None:
                 _render_serialized_results(serialized_results)
 
             runtime_seconds = run.get("runtime_seconds")
-            if isinstance(runtime_seconds, (int, float)):
+            if isinstance(runtime_seconds, int | float):
                 st.caption(f"Current project run time: {runtime_seconds:.2f} seconds")
 
 
@@ -1400,6 +1519,18 @@ def _run_assistant_query(
     with st.chat_message("user"):
         st.markdown(user_text)
 
+    if _is_demo_mode():
+        run_record = _build_demo_run_record(user_text, df)
+        with st.chat_message("assistant"):
+            st.markdown(run_record["assistant_text"])
+            _render_serialized_results(run_record["results"])
+            st.caption("Deterministic local demo result")
+        st.session_state.chat.append(
+            {"role": "assistant", "content": str(run_record["assistant_text"])}
+        )
+        st.session_state.analysis_runs.append(run_record)
+        return
+
     if not secrets.ollama_api_key or not secrets.e2b_api_key:
         message = "Missing API keys. Add Ollama Cloud and E2B keys in the sidebar, then try again."
         run_record["assistant_text"] = message
@@ -1407,7 +1538,6 @@ def _run_assistant_query(
         with st.chat_message("assistant"):
             st.markdown(message)
         st.session_state.analysis_runs.append(run_record)
-        _persist_workspace_state()
         return
 
     assistant_text = ""
@@ -1447,7 +1577,6 @@ def _run_assistant_query(
                 st.info("The model response did not include runnable Python. Try a more explicit request.")
                 st.session_state.chat.append({"role": "assistant", "content": display_text})
                 st.session_state.analysis_runs.append(run_record)
-                _persist_workspace_state()
                 return
 
             python_code = _ensure_chart_display(python_code, user_text)
@@ -1502,7 +1631,6 @@ def _run_assistant_query(
 
     st.session_state.chat.append({"role": "assistant", "content": run_record["assistant_text"] or assistant_text})
     st.session_state.analysis_runs.append(run_record)
-    _persist_workspace_state()
 
 
 def _render_workspace(
@@ -1514,32 +1642,32 @@ def _render_workspace(
     df: pd.DataFrame,
     profile: DatasetProfile,
 ) -> None:
+    demo_mode = _is_demo_mode()
     _render_section_header(
         "Ask about your data",
-        "Type a question and the app will generate code, run it, and show the result here.",
+        (
+            "Try a trend, comparison, or quality question against the bundled sample."
+            if demo_mode
+            else "Type a question and the app will generate code, run it, and show the result here."
+        ),
         "AI Workspace",
     )
 
-    if not secrets.ollama_api_key or not secrets.e2b_api_key:
+    if not demo_mode and (not secrets.ollama_api_key or not secrets.e2b_api_key):
         st.warning("Add both API keys in the sidebar to run analysis.")
 
     with st.container(border=True):
         _render_analysis_history()
 
         pending_prompt = str(st.session_state.pop("pending_prompt", ""))
-        if pending_prompt:
-            _persist_workspace_state()
 
     workspace_tool_col, dataset_tool_col, starter_tool_col = st.columns(3, gap="small")
-    with workspace_tool_col:
-        with st.popover("Workspace", use_container_width=True):
-            _render_workspace_overview(profile, model)
-    with dataset_tool_col:
-        with st.popover("Dataset", use_container_width=True):
-            _render_dataset_quick_view(uploaded_name, profile)
-    with starter_tool_col:
-        with st.popover("Starter Prompt", use_container_width=True):
-            _render_prompt_gallery(profile)
+    with workspace_tool_col, st.popover("Workspace", use_container_width=True):
+        _render_workspace_overview(profile, model)
+    with dataset_tool_col, st.popover("Dataset", use_container_width=True):
+        _render_dataset_quick_view(uploaded_name, profile)
+    with starter_tool_col, st.popover("Starter Prompt", use_container_width=True):
+        _render_prompt_gallery(profile)
 
     user_text = st.chat_input(
         "Ask about trends, comparisons, anomalies, segmentation, or the best visualization for this data..."
@@ -1560,10 +1688,10 @@ def _render_workspace(
     )
 
 
-def _build_active_dataset(filename: str, file_bytes: bytes) -> Optional[ActiveDataset]:
+def _build_active_dataset(filename: str, file_bytes: bytes) -> ActiveDataset | None:
     try:
         df = _load_csv(file_bytes)
-        profile = _profile_dataset(file_bytes)
+        profile = _profile_dataset(df)
     except Exception as exc:
         st.error("This CSV could not be parsed cleanly. Please verify the file encoding and delimiter.")
         st.code(str(exc))
@@ -1572,22 +1700,39 @@ def _build_active_dataset(filename: str, file_bytes: bytes) -> Optional[ActiveDa
     return ActiveDataset(name=filename, file_bytes=file_bytes, df=df, profile=profile)
 
 
-def _restore_active_dataset() -> Optional[ActiveDataset]:
+def _restore_active_dataset() -> ActiveDataset | None:
     dataset_name = st.session_state.get("dataset_name")
     dataset_bytes = st.session_state.get("dataset_bytes")
-    if not dataset_name or not isinstance(dataset_bytes, (bytes, bytearray)):
+    if not dataset_name or not isinstance(dataset_bytes, bytes | bytearray):
+        if _is_demo_mode():
+            active_dataset = _build_active_dataset(DEMO_DATASET_NAME, DEMO_DATASET_BYTES)
+            if active_dataset is not None:
+                _set_active_dataset(active_dataset.name, active_dataset.file_bytes)
+            return active_dataset
         return None
 
     active_dataset = _build_active_dataset(str(dataset_name), bytes(dataset_bytes))
     if active_dataset is None:
-        st.warning("The saved dataset could not be restored cleanly. Upload the CSV again.")
+        st.warning("The session dataset could not be restored cleanly. Upload the CSV again.")
         _clear_active_dataset()
         return None
 
     return active_dataset
 
 
-def _render_workspace_input() -> Optional[ActiveDataset]:
+def _render_workspace_input() -> ActiveDataset | None:
+    if _is_demo_mode():
+        _render_section_header(
+            "Explore the demo dataset",
+            "The bundled synthetic retail sample stays inside this Streamlit session.",
+            "Input",
+        )
+        active_dataset = _build_active_dataset(DEMO_DATASET_NAME, DEMO_DATASET_BYTES)
+        if active_dataset is not None:
+            _set_active_dataset(active_dataset.name, active_dataset.file_bytes)
+            st.caption(f"Using bundled dataset: {active_dataset.name}")
+        return active_dataset
+
     _render_section_header(
         "Load a dataset",
         "Upload a CSV here. Once it is loaded, the same file is available across the other pages.",
@@ -1608,7 +1753,7 @@ def _render_workspace_input() -> Optional[ActiveDataset]:
     active_dataset = _restore_active_dataset()
     if active_dataset is None:
         return None
-    st.caption(f"Using saved dataset: {active_dataset.name}")
+    st.caption(f"Using session dataset: {active_dataset.name}")
     return active_dataset
 
 
@@ -1639,7 +1784,7 @@ def _dataset_lab_page() -> None:
         return
 
     st.caption(f"Current dataset: {active_dataset.name}")
-    _render_dataset_lab(active_dataset.file_bytes, active_dataset.df, active_dataset.profile)
+    _render_dataset_lab(active_dataset.df, active_dataset.profile)
 
 
 def _project_details_page() -> None:
@@ -1651,7 +1796,9 @@ def _project_details_page() -> None:
 
 def _is_running_with_streamlit() -> bool:
     try:
-        from streamlit.runtime.scriptrunner_utils.script_run_context import get_script_run_ctx
+        from streamlit.runtime.scriptrunner_utils.script_run_context import (
+            get_script_run_ctx,
+        )
 
         return get_script_run_ctx() is not None
     except Exception:
