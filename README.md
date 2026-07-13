@@ -4,6 +4,10 @@ AI Data Visualization Agent is a Streamlit application for profiling CSV dataset
 them with natural-language prompts. It combines local dataset inspection, Ollama Cloud code
 generation, E2B sandbox execution, and result review in one interface.
 
+**[Try the public demo](https://vidhi-data-visualization-agent.streamlit.app)** - explore bundled
+synthetic retail data with deterministic local analysis. No API keys are required, and the public
+deployment does not call Ollama Cloud or E2B.
+
 ## Provenance
 
 This repository began from Gurpreet Kaur's
@@ -157,7 +161,10 @@ connectivity, model quality, sandbox behavior, browser interactions, or deployme
 
 ## Deployment
 
-No hosted deployment or deployment manifest is included. A public demo deployment should:
+The verified public demo is available at
+[vidhi-data-visualization-agent.streamlit.app](https://vidhi-data-visualization-agent.streamlit.app).
+It deploys `main` on Streamlit Community Cloud with Python 3.11, `DEMO_MODE=true`, and no Ollama
+Cloud or E2B credentials. A production-equivalent public demo deployment should:
 
 1. Use Python 3.11 or 3.12 and install `requirements.txt`.
 2. Set `DEMO_MODE=true` and do not configure Ollama Cloud or E2B credentials.
