@@ -506,7 +506,7 @@ def _render_chart_payload(chart_payload: dict[str, Any]) -> bool:
             .properties(title=title or None)
             .interactive()
         )
-        st.altair_chart(interactive_chart, use_container_width=True)
+        st.altair_chart(interactive_chart, width="stretch")
         return True
 
     if chart_type == "bar":
@@ -544,7 +544,7 @@ def _render_chart_payload(chart_payload: dict[str, Any]) -> bool:
             .properties(title=title or None)
             .interactive()
         )
-        st.altair_chart(interactive_chart, use_container_width=True)
+        st.altair_chart(interactive_chart, width="stretch")
         return True
 
     if chart_type == "pie":
@@ -577,7 +577,7 @@ def _render_chart_payload(chart_payload: dict[str, Any]) -> bool:
             .properties(title=title or None)
             .interactive()
         )
-        st.altair_chart(interactive_chart, use_container_width=True)
+        st.altair_chart(interactive_chart, width="stretch")
         return True
 
     if chart_type == "box_and_whisker":
@@ -597,7 +597,7 @@ def _render_chart_payload(chart_payload: dict[str, Any]) -> bool:
             )
         if not rows:
             return False
-        st.dataframe(pd.DataFrame(rows), use_container_width=True)
+        st.dataframe(pd.DataFrame(rows), width="stretch")
         return True
 
     return False
@@ -682,7 +682,7 @@ def _render_serialized_results(results: Iterable[dict[str, Any]]) -> None:
         if kind == "image" and result.get("png"):
             try:
                 image = Image.open(io.BytesIO(base64.b64decode(str(result["png"]))))
-                st.image(image, caption="Generated visualization", use_container_width=True)
+                st.image(image, caption="Generated visualization", width="stretch")
                 continue
             except Exception:
                 st.write("Generated visualization")
@@ -691,7 +691,7 @@ def _render_serialized_results(results: Iterable[dict[str, Any]]) -> None:
         if kind == "table" and result.get("data"):
             try:
                 frame = pd.read_json(io.StringIO(str(result["data"])), orient="split")
-                st.dataframe(frame, use_container_width=True)
+                st.dataframe(frame, width="stretch")
                 continue
             except Exception:
                 st.code(str(result["data"]))
@@ -1176,7 +1176,7 @@ def _sidebar() -> tuple[Secrets, ModelOption]:
 
         st.button(
             "Reset conversation",
-            use_container_width=True,
+            width="stretch",
             on_click=_reset_conversation,
         )
 
@@ -1263,7 +1263,7 @@ def _render_prompt_gallery(profile: DatasetProfile) -> None:
         options=prompt_options,
         key="workspace_starter_prompt_select",
     )
-    if st.button("Use selected prompt", use_container_width=True, key="workspace_starter_prompt_button"):
+    if st.button("Use selected prompt", width="stretch", key="workspace_starter_prompt_button"):
         st.session_state.pending_prompt = selected_prompt
 
 
@@ -1325,7 +1325,7 @@ def _render_dataset_lab(df: pd.DataFrame, profile: DatasetProfile) -> None:
         st.markdown("#### Missing values")
         top_missing = pd.DataFrame(profile.top_missing_columns, columns=["column", "missing"])
         if not top_missing.empty:
-            st.bar_chart(top_missing.set_index("column"), use_container_width=True)
+            st.bar_chart(top_missing.set_index("column"), width="stretch")
         else:
             st.success("No major missing-value issues stand out in the leading columns.")
     with top_right:
@@ -1344,7 +1344,7 @@ def _render_dataset_lab(df: pd.DataFrame, profile: DatasetProfile) -> None:
             )
 
     st.markdown("#### Data preview")
-    st.dataframe(df.head(40), use_container_width=True, height=420)
+    st.dataframe(df.head(40), width="stretch", height=420)
 
     schema_left, schema_right = st.columns([0.95, 1.05], gap="large")
     with schema_left:
@@ -1360,12 +1360,12 @@ def _render_dataset_lab(df: pd.DataFrame, profile: DatasetProfile) -> None:
             st.code(", ".join(profile.datetime_like_columns[:10]), language="text")
     with schema_right:
         st.markdown("#### Column metadata")
-        st.dataframe(_column_metadata(df), use_container_width=True, height=360)
+        st.dataframe(_column_metadata(df), width="stretch", height=360)
 
     numeric_preview = df.select_dtypes(include="number")
     if not numeric_preview.empty:
         with st.expander("Numeric summary", expanded=False):
-            st.dataframe(numeric_preview.describe().T, use_container_width=True)
+            st.dataframe(numeric_preview.describe().T, width="stretch")
 
 
 def _render_project_details() -> None:
@@ -1662,11 +1662,11 @@ def _render_workspace(
         pending_prompt = str(st.session_state.pop("pending_prompt", ""))
 
     workspace_tool_col, dataset_tool_col, starter_tool_col = st.columns(3, gap="small")
-    with workspace_tool_col, st.popover("Workspace", use_container_width=True):
+    with workspace_tool_col, st.popover("Workspace", width="stretch"):
         _render_workspace_overview(profile, model)
-    with dataset_tool_col, st.popover("Dataset", use_container_width=True):
+    with dataset_tool_col, st.popover("Dataset", width="stretch"):
         _render_dataset_quick_view(uploaded_name, profile)
-    with starter_tool_col, st.popover("Starter Prompt", use_container_width=True):
+    with starter_tool_col, st.popover("Starter Prompt", width="stretch"):
         _render_prompt_gallery(profile)
 
     user_text = st.chat_input(
