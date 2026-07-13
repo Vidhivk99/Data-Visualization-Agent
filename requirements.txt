@@ -1,8 +1,10 @@
-e2b-code-interpreter==1.0.3
+-c requirements-lock.txt
+
+altair==6.2.2
 e2b==1.0.5
-Pillow==10.4.0
-altair
-numpy
-streamlit
-pandas
-matplotlib
+e2b-code-interpreter==1.0.3
+matplotlib==3.11.0
+numpy==2.4.6
+pandas==3.0.3
+pillow==10.4.0
+streamlit==1.59.2
